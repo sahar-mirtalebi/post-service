@@ -68,7 +68,7 @@ func (handler *PostHandler) GetAllPosts(c echo.Context) error {
 		if price[0] != "" {
 			min, err := strconv.Atoi(price[0])
 			if err != nil {
-				return echo.NewHTTPError(http.StatusBadRequest, "Invalid maximum price")
+				return echo.NewHTTPError(http.StatusBadRequest, "Invalid minimum price")
 
 			}
 			minPrice = &min
@@ -79,6 +79,9 @@ func (handler *PostHandler) GetAllPosts(c echo.Context) error {
 				return echo.NewHTTPError(http.StatusBadRequest, "Invalid maximum price")
 			}
 			maxPrice = &max
+		}
+		if minPrice != nil && maxPrice != nil && *minPrice > *maxPrice {
+			return echo.NewHTTPError(http.StatusBadRequest, "Minimum price cannot be greater than maximum price")
 		}
 	}
 
@@ -118,8 +121,8 @@ func (handler *PostHandler) GetPostByID(c echo.Context) error {
 		handler.logger.Error("error retrieving post", zap.Error(err))
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed fo get post")
 	}
-	return c.JSON(http.StatusOK, post)
 
+	return c.JSON(http.StatusOK, post)
 }
 
 func (handler *PostHandler) GetPostsByOwnerId(c echo.Context) error {

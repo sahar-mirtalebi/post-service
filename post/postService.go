@@ -61,6 +61,15 @@ type PostResponse struct {
 	Category    string  `json:"category"`
 }
 
+type PostResponseWithOwner struct {
+	Title       string  `json:"title"`
+	Description string  `json:"description"`
+	PricePerDay float64 `json:"pricePerDay"`
+	Address     string  `json:"address"`
+	Category    string  `json:"category"`
+	OwnerId     uint    `json:"ownerId"`
+}
+
 func (service *PostService) GetAllPosts(categoryName, title string, minPrice, maxPrice *int, page, size int) ([]PostResponse, error) {
 	var postResponseList []PostResponse
 	var categoryId *uint
@@ -99,28 +108,29 @@ func (service *PostService) GetAllPosts(categoryName, title string, minPrice, ma
 	return postResponseList, nil
 }
 
-func (service *PostService) GetPostByID(postId uint) (PostResponse, error) {
+func (service *PostService) GetPostByID(postId uint) (PostResponseWithOwner, error) {
 	retrieveedPost, err := service.repo.GetPostByID(postId)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			service.logger.Error("error finding post", zap.Error(err))
-			return PostResponse{}, echo.NewHTTPError(http.StatusNotFound, "Post not found")
+			return PostResponseWithOwner{}, echo.NewHTTPError(http.StatusNotFound, "Post not found")
 		}
 		service.logger.Error("error retrieving post", zap.Error(err))
-		return PostResponse{}, echo.NewHTTPError(http.StatusInternalServerError, "failed fo get post")
+		return PostResponseWithOwner{}, echo.NewHTTPError(http.StatusInternalServerError, "failed fo get post")
 	}
-	category, err := service.catRepo.GetCategoryById(retrieveedPost.ID)
+	category, err := service.catRepo.GetCategoryById(retrieveedPost.CategoryID)
 	if err != nil {
 		service.logger.Error("error retrieve category by id", zap.Error(err))
-		return PostResponse{}, echo.NewHTTPError(http.StatusInternalServerError, "failed to get category")
+		return PostResponseWithOwner{}, echo.NewHTTPError(http.StatusInternalServerError, "failed to get category")
 	}
 
-	return PostResponse{
+	return PostResponseWithOwner{
 		Title:       retrieveedPost.Title,
 		Description: retrieveedPost.Description,
 		PricePerDay: retrieveedPost.PricePerDay,
 		Address:     retrieveedPost.Address,
 		Category:    category.Name,
+		OwnerId:     retrieveedPost.OwnerId,
 	}, nil
 }
 
