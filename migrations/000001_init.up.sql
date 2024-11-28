@@ -17,5 +17,4 @@ CREATE TABLE posts (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     owner_id INTEGER NOT NULL,
     FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL,
-    FOREIGN KEY (owner_id) REFERENCES "user-service".users(id) ON DELETE CASCADE
 );

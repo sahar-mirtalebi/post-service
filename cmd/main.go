@@ -23,13 +23,13 @@ func NewDB() (*gorm.DB, error) {
 	return db, nil
 }
 
-func NewLogger() (*zap.Logger, error) {
-	logger, err := zap.NewProduction()
-	if err != nil {
-		return nil, err
-	}
-	return logger, nil
-}
+// func NewLogger() (*zap.Logger, error) {
+// 	logger, err := zap.NewProduction()
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	return logger, nil
+// }
 
 func NewValidator() *validator.Validate {
 	return validator.New()
@@ -64,7 +64,7 @@ func main() {
 	app := fx.New(
 		fx.Provide(
 			NewDB,
-			NewLogger,
+			//NewLogger,
 			NewValidator,
 			category.NewCategoryRepository,
 			category.NewCategoryService,

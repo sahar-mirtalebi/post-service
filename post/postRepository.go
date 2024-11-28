@@ -7,16 +7,16 @@ import (
 )
 
 type Post struct {
-	ID          uint      `gorm:"primaryKey;autoIncrement" json:"id"`
-	Title       string    `json:"title" validate:"required"`
-	Description string    `json:"description" validate:"required"`
-	PricePerDay float64   `json:"pricePerDay" validate:"required"`
-	Address     string    `json:"address" validate:"required"`
-	CategoryID  uint      `json:"categoryId" validate:"required"`
-	IsActive    bool      `json:"isActive" validate:"required"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
-	OwnerId     uint      `json:"ownerId"`
+	ID          uint
+	Title       string
+	Description string
+	PricePerDay float64
+	Address     string
+	CategoryID  uint
+	IsActive    bool
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	OwnerId     uint
 }
 
 type PostRepository struct {

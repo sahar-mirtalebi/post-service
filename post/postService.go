@@ -2,24 +2,25 @@ package post
 
 import (
 	"errors"
-	"net/http"
 	"post-service/category"
+	"strconv"
+	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
-	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
 type PostService struct {
 	catRepo *category.CategoryRepository
 	repo    *PostRepository
-	logger  *zap.Logger
 }
 
-func NewPostService(catRepo *category.CategoryRepository, repo *PostRepository, logger *zap.Logger) *PostService {
-	return &PostService{catRepo: catRepo, repo: repo, logger: logger}
+func NewPostService(catRepo *category.CategoryRepository, repo *PostRepository) *PostService {
+	return &PostService{catRepo: catRepo, repo: repo}
 }
+
+var ErrPostNotFound = errors.New("post not found")
+var ErrForbidden = errors.New("not allowed to update post")
 
 func (service *PostService) CreatePost(userId uint, newPost struct {
 	Title       string  `json:"title" validate:"required"`
@@ -27,11 +28,10 @@ func (service *PostService) CreatePost(userId uint, newPost struct {
 	PricePerDay float64 `json:"pricePerDay" validate:"required"`
 	Address     string  `json:"address" validate:"required"`
 	Category    string  `json:"category" validate:"required"`
-}) (uint, error) {
+}) (*uint, error) {
 	category, err := service.catRepo.GetCategoryByName(newPost.Category)
 	if err != nil {
-		service.logger.Error("failed to retrieve category", zap.Error(err))
-		return 0, echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+		return nil, err
 	}
 
 	post := Post{
@@ -46,11 +46,10 @@ func (service *PostService) CreatePost(userId uint, newPost struct {
 	}
 
 	if err := service.repo.AddPost(&post); err != nil {
-		service.logger.Error("Error creating post", zap.Error(err))
-		return 0, echo.NewHTTPError(http.StatusInternalServerError, "Failed to create post")
+		return nil, err
 	}
 
-	return post.ID, nil
+	return &post.ID, nil
 }
 
 type PostResponse struct {
@@ -70,31 +69,54 @@ type PostResponseWithOwner struct {
 	OwnerId     uint    `json:"ownerId"`
 }
 
-func (service *PostService) GetAllPosts(categoryName, title string, minPrice, maxPrice *int, page, size int) ([]PostResponse, error) {
+func (service *PostService) GetAllPosts(categoryName, title, priceStr string, page int) (*[]PostResponse, error) {
 	var postResponseList []PostResponse
 	var categoryId *uint
 	if categoryName != "" {
 		category, err := service.catRepo.GetCategoryByName(categoryName)
 		if err != nil {
-			service.logger.Error("failed to retrieve category", zap.Error(err))
-			return nil, echo.NewHTTPError(http.StatusInternalServerError, "internal server error")
+			return nil, err
 		}
 		categoryId = &category.ID
 	}
 
+	var minPrice, maxPrice *int
+
+	if priceStr != "" {
+		price := strings.Split(priceStr, "-")
+		if price[0] != "" {
+			min, err := strconv.Atoi(price[0])
+			if err != nil {
+				return nil, err
+
+			}
+			minPrice = &min
+		}
+		if price[1] != "" {
+			max, err := strconv.Atoi(price[1])
+			if err != nil {
+				return nil, err
+			}
+			maxPrice = &max
+		}
+		if minPrice != nil && maxPrice != nil && *minPrice > *maxPrice {
+
+			return nil, errors.New("minimum price cannot be greater than maximum price")
+		}
+	}
+
+	size := 10
 	offset := (page - 1) * size
 
 	posts, err := service.repo.GetAllPosts(minPrice, maxPrice, title, categoryId, offset, size)
 	if err != nil {
-		service.logger.Error("error getting posts", zap.Error(err))
-		return nil, echo.NewHTTPError(http.StatusInternalServerError, "Failed to fetch posts")
+		return nil, err
 	}
 
 	for _, post := range posts {
 		category, err := service.catRepo.GetCategoryById(post.CategoryID)
 		if err != nil {
-			service.logger.Error("error retrieving category by id", zap.Error(err))
-			return nil, echo.NewHTTPError(http.StatusInternalServerError, "failed to get category")
+			return nil, err
 		}
 		postResponseList = append(postResponseList, PostResponse{
 			Title:       post.Title,
@@ -105,26 +127,27 @@ func (service *PostService) GetAllPosts(categoryName, title string, minPrice, ma
 		})
 
 	}
-	return postResponseList, nil
+	return &postResponseList, nil
 }
 
-func (service *PostService) GetPostByID(postId uint) (PostResponseWithOwner, error) {
-	retrieveedPost, err := service.repo.GetPostByID(postId)
+func (service *PostService) GetPostByID(postId string) (*PostResponseWithOwner, error) {
+	id, err := strconv.ParseUint(postId, 10, 32)
+	if err != nil {
+		return nil, err
+	}
+	retrieveedPost, err := service.repo.GetPostByID(uint(id))
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			service.logger.Error("error finding post", zap.Error(err))
-			return PostResponseWithOwner{}, echo.NewHTTPError(http.StatusNotFound, "Post not found")
+			return nil, err
 		}
-		service.logger.Error("error retrieving post", zap.Error(err))
-		return PostResponseWithOwner{}, echo.NewHTTPError(http.StatusInternalServerError, "failed fo get post")
+		return nil, err
 	}
 	category, err := service.catRepo.GetCategoryById(retrieveedPost.CategoryID)
 	if err != nil {
-		service.logger.Error("error retrieve category by id", zap.Error(err))
-		return PostResponseWithOwner{}, echo.NewHTTPError(http.StatusInternalServerError, "failed to get category")
+		return nil, err
 	}
 
-	return PostResponseWithOwner{
+	return &PostResponseWithOwner{
 		Title:       retrieveedPost.Title,
 		Description: retrieveedPost.Description,
 		PricePerDay: retrieveedPost.PricePerDay,
@@ -134,20 +157,25 @@ func (service *PostService) GetPostByID(postId uint) (PostResponseWithOwner, err
 	}, nil
 }
 
-func (service *PostService) GetPostsByOwnerId(userId uint, page, size int) ([]PostResponse, error) {
+func (service *PostService) GetPostsByOwnerId(userId uint, pageStr string) ([]PostResponse, error) {
 	var postResponseList []PostResponse
+	page, err := strconv.Atoi(pageStr)
+	if err != nil || page < 1 {
+		page = 1
+	}
+
+	size := 10
+
 	offset := (page - 1) * size
 	posts, err := service.repo.GetPostsByOwnerId(userId, offset, size)
 	if err != nil {
-		service.logger.Error("failed to retrieve posts by owner ID", zap.Error(err))
 		return nil, err
 	}
 
 	for _, post := range posts {
 		category, err := service.catRepo.GetCategoryById(post.CategoryID)
 		if err != nil {
-			service.logger.Error("error retrieving category by id", zap.Error(err))
-			return nil, echo.NewHTTPError(http.StatusInternalServerError, "failed to get category")
+			return nil, err
 		}
 
 		postResponseList = append(postResponseList, PostResponse{
@@ -161,35 +189,35 @@ func (service *PostService) GetPostsByOwnerId(userId uint, page, size int) ([]Po
 	return postResponseList, nil
 }
 
-func (service *PostService) UpdatePost(userId, postId uint, updatedPost struct {
-	Title       string  `json:"title"`
-	Description string  `json:"description"`
-	PricePerDay float64 `json:"pricePerDay"`
-	Address     string  `json:"address"`
-	Category    string  `json:"category"`
-	IsActive    bool    `json:"isActive"`
+func (service *PostService) UpdatePost(userId uint, postIdStr string, updatedPost struct {
+	Title       string  `json:"title" validate:"required"`
+	Description string  `json:"description" validate:"required"`
+	PricePerDay float64 `json:"pricePerDay" validate:"required"`
+	Address     string  `json:"address" validate:"required"`
+	Category    string  `json:"category" validate:"required"`
+	IsActive    bool    `json:"isActive" validate:"required"`
 }) error {
-	post, err := service.repo.GetPostByID(postId)
+	postId, err := strconv.ParseUint(postIdStr, 10, 32)
+	if err != nil {
+		return err
+	}
+	post, err := service.repo.GetPostByID(uint(postId))
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			service.logger.Error("Post not found", zap.Error(err))
-			return echo.NewHTTPError(http.StatusNotFound, "Post not found")
+			return ErrPostNotFound
 		}
-		service.logger.Error("error retrieving post", zap.Error(err))
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to retrive post")
+		return err
 	}
 
 	if userId != post.OwnerId {
-		service.logger.Error("error not allowed to update", zap.Error(err))
-		return echo.NewHTTPError(http.StatusForbidden, "not authorised to update post")
+		return ErrForbidden
 	}
 
 	var categoryId *uint
 	if updatedPost.Category != "" {
 		category, err := service.catRepo.GetCategoryByName(updatedPost.Category)
 		if err != nil {
-			service.logger.Error("error retrieving category", zap.Error(err))
-			return echo.NewHTTPError(http.StatusInternalServerError, "Failed to retrieve category")
+			return err
 		}
 		categoryId = &category.ID
 	}
@@ -214,32 +242,32 @@ func (service *PostService) UpdatePost(userId, postId uint, updatedPost struct {
 
 	err = service.repo.UpdatePost(post)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "Failed to update post")
+		return err
 	}
 	return nil
 }
 
-func (service *PostService) DeletePost(postId, userId uint) error {
-	post, err := service.repo.GetPostByID(postId)
+func (service *PostService) DeletePost(postIdStr string, userId uint) error {
+	postId, err := strconv.ParseUint(postIdStr, 10, 32)
+	if err != nil {
+		return err
+	}
+	post, err := service.repo.GetPostByID(uint(postId))
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			service.logger.Error("Post not found", zap.Error(err))
-			return echo.NewHTTPError(http.StatusNotFound, "Post not found")
+			return ErrPostNotFound
 		}
-		service.logger.Error("error retrieving post", zap.Error(err))
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to retrive post")
+		return err
 
 	}
 
 	if post.OwnerId != userId {
-		service.logger.Error("error not allowed to delete", zap.Error(err))
-		return echo.NewHTTPError(http.StatusForbidden, "not authorised to delete post")
+		return ErrForbidden
 	}
 
-	err = service.repo.DeletePost(postId)
+	err = service.repo.DeletePost(uint(postId))
 	if err != nil {
-		service.logger.Error("error deleting post", zap.Error(err))
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to delete post")
+		return err
 	}
 	return nil
 }
